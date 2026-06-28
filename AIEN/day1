@@ -1,0 +1,757 @@
+# AIEN — Day 1 Complete Instruction Sheet
+## Component: Mission Creator
+
+---
+
+> **Assumed starting state:** IDE open, repo cloned from `https://github.com/deshadspace/asteroidhub/`, Git working.
+
+---
+
+## SECTION A — Local Environment Setup
+
+### A1. Core Tools
+
+```bash
+# 1. Node.js via nvm (skip if already on Node 20+)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+source ~/.zshrc           # or ~/.bash_profile on older macOS
+nvm install 20
+nvm use 20
+node --version            # expect v20.x.x
+
+# 2. pnpm
+npm install -g pnpm@9
+pnpm --version            # expect 9.x.x
+
+# 3. NestJS CLI
+npm install -g @nestjs/cli
+nest --version            # expect 10.x.x
+```
+
+### A2. Docker Desktop
+
+Download from https://www.docker.com/products/docker-desktop/ (free, Mac M2 has native ARM image)
+
+```bash
+docker --version          # Docker 25+
+docker compose version    # v2.x.x
+```
+
+---
+
+## SECTION B — Local Services (100% Free, No Accounts)
+
+### B1. docker-compose.yml
+
+Create this at your repo root:
+
+```yaml
+# infrastructure/docker/docker-compose.dev.yml
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aien_postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: aien
+      POSTGRES_PASSWORD: aien_dev_pass
+      POSTGRES_DB: aien_db
+    volumes:
+      - aien_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aien -d aien_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: aien_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - aien_redis_data:/data
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: aien_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: aien
+      RABBITMQ_DEFAULT_PASS: aien_dev_pass
+
+volumes:
+  aien_postgres_data:
+  aien_redis_data:
+```
+
+### B2. Start Services
+
+```bash
+cd asteroidhub
+docker compose -f infrastructure/docker/docker-compose.dev.yml up -d
+
+# Verify all running
+docker compose -f infrastructure/docker/docker-compose.dev.yml ps
+
+# Test PostgreSQL
+docker exec -it aien_postgres psql -U aien -d aien_db -c "SELECT version();"
+# Should print: PostgreSQL 16.x...
+
+# RabbitMQ management UI (optional, browser)
+open http://localhost:15672   # user: aien / pass: aien_dev_pass
+```
+
+> **Alternative if you want cloud DB (also free):** Sign up at https://neon.tech → Create project → Copy the connection string. Replace the DATABASE_URL below with the Neon string. Everything else is identical.
+
+---
+
+## SECTION C — Monorepo Initialization
+
+### C1. Root package.json
+
+```bash
+cd asteroidhub
+
+# If package.json doesn't exist yet
+pnpm init
+```
+
+Replace contents of `package.json` with:
+
+```json
+{
+  "name": "asteroidhub",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "services:up": "docker compose -f infrastructure/docker/docker-compose.dev.yml up -d",
+    "services:down": "docker compose -f infrastructure/docker/docker-compose.dev.yml down"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.0",
+    "@types/node": "^20.0.0"
+  }
+}
+```
+
+### C2. pnpm Workspace
+
+Create `pnpm-workspace.yaml` at root:
+
+```yaml
+packages:
+  - 'apps/*'
+  - 'domains/*'
+  - 'shared/*'
+```
+
+### C3. Turborepo
+
+```bash
+pnpm add -Dw turbo
+```
+
+Create `turbo.json` at root:
+
+```json
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "dist/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "test": {
+      "dependsOn": ["^build"]
+    },
+    "lint": {}
+  }
+}
+```
+
+### C4. Root TypeScript Config
+
+Create `tsconfig.base.json` at root:
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true
+  },
+  "exclude": ["node_modules"]
+}
+```
+
+### C5. Scaffold Folder Structure
+
+```bash
+# Create all top-level directories
+mkdir -p apps/web
+mkdir -p domains/mission/{src/{api,service,entities,repository,events,dto},tests}
+mkdir -p domains/asteroid
+mkdir -p domains/mining
+mkdir -p domains/robotics
+mkdir -p domains/lunar
+mkdir -p domains/manufacturing
+mkdir -p domains/economy
+mkdir -p shared/{types,dto,constants,utilities,event-contracts,logging}
+mkdir -p simulation/{orbital-engine,physics-engine,mining-models,ml}
+mkdir -p infrastructure/{docker,postgres,redis,rabbitmq,monitoring,deployment}
+mkdir -p scripts
+mkdir -p docs/{architecture,api-specs,ADR,diagrams}
+mkdir -p tests/{integration,e2e,load}
+```
+
+### C6. Scaffold the Mission NestJS Service
+
+```bash
+cd domains
+nest new mission --package-manager pnpm --skip-git --strict
+```
+
+When prompted, select `pnpm`. This creates the NestJS scaffold inside `domains/mission/`.
+
+Then install domain dependencies:
+
+```bash
+cd mission
+pnpm add @nestjs/typeorm typeorm pg
+pnpm add @nestjs/config @nestjs/event-emitter
+pnpm add class-validator class-transformer
+pnpm add -D @types/pg jest @types/jest ts-jest supertest @types/supertest
+```
+
+Update `domains/mission/package.json` — change `"name"` to:
+```json
+"name": "@aien/mission-service"
+```
+
+### C7. Scaffold the Web Next.js App
+
+```bash
+cd ../../apps
+pnpm create next-app@latest web \
+  --typescript \
+  --tailwind \
+  --eslint \
+  --no-app \
+  --src-dir \
+  --import-alias "@/*"
+```
+
+Update `apps/web/package.json` — change `"name"` to:
+```json
+"name": "@aien/web"
+```
+
+### C8. Environment Variables
+
+Create `.env` at repo root (add to `.gitignore`):
+
+```env
+# PostgreSQL (Docker local)
+DATABASE_URL=postgresql://aien:aien_dev_pass@localhost:5432/aien_db
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_USER=aien
+DATABASE_PASSWORD=aien_dev_pass
+DATABASE_NAME=aien_db
+
+# Redis
+REDIS_URL=redis://localhost:6379
+
+# RabbitMQ
+RABBITMQ_URL=amqp://aien:aien_dev_pass@localhost:5672
+
+# Env
+NODE_ENV=development
+```
+
+Create `domains/mission/.env`:
+
+```env
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_USER=aien
+DATABASE_PASSWORD=aien_dev_pass
+DATABASE_NAME=aien_db
+PORT=3001
+NODE_ENV=development
+```
+
+Create `apps/web/.env.local`:
+
+```env
+NEXT_PUBLIC_MISSION_API=http://localhost:3001
+NODE_ENV=development
+```
+
+Add to root `.gitignore`:
+
+```
+.env
+.env.local
+.env.*.local
+node_modules/
+dist/
+.next/
+*.js.map
+```
+
+### C9. Install All Dependencies
+
+```bash
+# From repo root
+cd ..
+pnpm install
+```
+
+### C10. Verify Setup
+
+```bash
+# Terminal 1 — start mission service
+cd domains/mission
+pnpm run start:dev
+# Should print: NestJS application listening on port 3001
+
+# Terminal 2 — start web app
+cd apps/web
+pnpm run dev
+# Should print: Next.js ready on http://localhost:3000
+```
+
+---
+
+## SECTION D — Day 1 Prompt Templates
+
+> Copy each prompt exactly into your AI coding tool (Cursor, Claude, etc.).
+> Fill in the `[bracketed]` sections with actual values as you go.
+> Never skip to Prompt 2 without green-lighting Prompt 1's plan.
+
+---
+
+### PROMPT 1 — PLANNING
+
+```
+Goal:
+- Build the Mission Creator — the first vertical slice of the AIEN platform.
+- A user fills out a form (name, type, target body, optional description) and creates a new space mission.
+- The mission is saved to PostgreSQL and appears in a list on the web dashboard.
+- A MissionCreated event fires after creation (internal only, Day 1).
+- User impact: the dashboard goes from empty to showing real data that will feed every future domain.
+
+Context:
+- Tech stack: NestJS (TypeScript, strict mode), Next.js Pages Router (TypeScript), PostgreSQL via TypeORM, Docker locally, pnpm monorepo with Turborepo
+- Environment: development
+- Relevant files/modules:
+  - domains/mission/src/ — NestJS domain service
+  - apps/web/src/pages/index.tsx — dashboard (mission list)
+  - apps/web/src/pages/missions/new.tsx — create form (to be created)
+  - apps/web/src/components/ — shared UI components
+  - shared/dto/ — shared TypeScript types/DTOs
+- Known constraints:
+  - performance: API p99 < 300ms for create + list; DB must have index on createdAt
+  - security: No auth on Day 1 — but class-validator must strip unknown properties and validate all inputs strictly; DB errors must NOT leak to client
+  - UX: Form shows inline per-field validation errors + loading state on submit; list shows empty state when no missions exist
+  - backward compatibility: Greenfield — no existing schema to preserve
+
+Requirements:
+- Functional:
+  1. POST /missions — create mission with validated body; returns 201 + mission object
+  2. GET /missions — list missions ordered by createdAt DESC, limit 20; returns { data: Mission[], total: number }
+  3. GET /missions/:id — fetch single mission by UUID; 404 if not found
+  4. UI — /missions/new: form with name, description (optional), type (dropdown), targetBody; submit calls POST /missions
+  5. UI — /: mission list renders all missions; shows empty state if none
+  6. Internal event: MissionCreated fires after successful DB insert (NestJS EventEmitter2)
+- Non-functional:
+  - All DTO fields validated with class-validator decorators
+  - Service layer owns business logic; controller is thin (DTO transform only)
+  - TypeORM entity with UUID primary key (uuid_generate_v4)
+  - createdAt/updatedAt auto-managed by TypeORM
+
+Inputs/Outputs:
+- POST /missions
+  Request:
+  {
+    "name": "Apollo Redux",
+    "description": "First asteroid mission",   // optional
+    "type": "MINING",                           // enum: MINING | SURVEY | CONSTRUCTION | SUPPLY
+    "targetBody": "16 Psyche"
+  }
+  Response 201:
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Apollo Redux",
+    "description": "First asteroid mission",
+    "type": "MINING",
+    "targetBody": "16 Psyche",
+    "status": "DRAFT",
+    "createdAt": "2025-06-28T00:00:00.000Z",
+    "updatedAt": "2025-06-28T00:00:00.000Z"
+  }
+  Response 400:
+  {
+    "statusCode": 400,
+    "message": ["name must be longer than or equal to 3 characters"],
+    "error": "Bad Request"
+  }
+
+- GET /missions
+  Response 200:
+  { "data": [Mission, ...], "total": 2 }
+
+- GET /missions/:id
+  Response 200: Mission object
+  Response 404: { "statusCode": 404, "message": "Mission not found" }
+
+Edge cases:
+  1. name is empty string → 400 with field error
+  2. name exceeds 100 characters → 400 with field error
+  3. type is not in the enum (e.g. "RANDOM") → 400 with enum hint
+  4. targetBody is whitespace only ("   ") → trim + reject as empty → 400
+  5. description is omitted entirely → stored as null, not crash
+  6. description exceeds 500 characters → 400
+  7. GET /missions when table is empty → { data: [], total: 0 }, not 500
+  8. GET /missions/:id with non-UUID string → 400, not 500 (UUID format guard)
+  9. PostgreSQL is unreachable → 503 with generic message, no connection string in body
+  10. POST with extra unknown fields (e.g. "status": "ACTIVE") → silently strip, status always DRAFT
+
+Acceptance criteria:
+  - POST /missions valid body → 201, mission returned, row exists in DB (verifiable via psql)
+  - POST /missions invalid body → 400, field-level errors in message array
+  - status is always "DRAFT" regardless of what client sends
+  - GET /missions → array response, empty array when table empty
+  - GET /missions/:id valid UUID → 200 mission; missing UUID → 404
+  - MissionCreated event fires (console.log in handler sufficient for Day 1)
+  - UI form shows spinner on submit; disables submit button during request
+  - UI form shows per-field error under each failing field
+  - UI mission list reloads after successful creation
+  - NestJS global ValidationPipe is enabled with { whitelist: true, forbidNonWhitelisted: false }
+
+Non-goals:
+  - No authentication or JWT on Day 1
+  - No pagination controls in UI (backend limit=20 is enough)
+  - No mission editing, archiving, or deletion
+  - No RabbitMQ yet — NestJS EventEmitter2 only
+  - No file uploads or attachments
+  - No WebSocket / real-time
+  - Do not build GET /missions with filters/search yet
+
+Ask:
+1. Propose 2–3 approaches for the API-to-DB layer (TypeORM entity vs raw pg vs Prisma), with tradeoffs specific to this NestJS monorepo
+2. Identify risks per approach (especially migration strategy as domains grow)
+3. Choose the best approach with justification
+4. Break into numbered atomic implementation steps (each step should be completable in < 30 minutes)
+5. Define test strategy: what to unit-test in the service, what to integration-test at the controller level
+6. List failure modes: at least 3 technical + 3 UX
+7. Identify observability needs: what should be logged on mission create, on 400, on 500
+
+Constraints:
+- Do NOT write code yet
+- Prefer minimal, maintainable solution
+- Avoid overengineering — this is Day 1 of 180+ days
+
+Instruction:
+Plan the solution clearly.
+Await my green approval before writing any code.
+If you need to modify existing files, identify which ones and what changes before touching them.
+```
+
+---
+
+### PROMPT 2 — IMPLEMENTATION (per approved step)
+
+```
+Task:
+Implement ONLY step [X] from the approved plan: [paste the specific step title here].
+
+Example: "Step 3 — Create MissionService with create() and findAll() methods"
+
+Requirements:
+- Follow NestJS conventions and TypeORM patterns
+- Keep changes minimal and localized to the files specified in the plan
+- No changes outside domains/mission/ unless explicitly listed in the plan step
+- All TypeScript — no `any`, no implicit types
+
+Output:
+1. Code (complete, clean, typed)
+2. Explanation: what changed and why
+3. Potential risks introduced by this step
+
+Testing:
+- Write unit tests for any service method created in this step
+- Happy path: valid input → expected return
+- Failure: invalid/missing field → appropriate exception thrown
+- Boundary: test the exact min/max length constraint (e.g. name.length === 3 passes, name.length === 2 fails)
+- At least 1 test that intentionally fails (confirms guard is working)
+
+Validation:
+- What assumptions does this step make that could break a later step?
+- What could still go wrong after this step is merged?
+
+Constraints:
+- Do NOT modify unrelated files
+- Do NOT refactor existing code unless the plan step explicitly says so
+- Do NOT add dependencies not already installed
+- Keep solution simple — this is a foundation brick, not the whole building
+
+Instruction:
+Stop after this step.
+Show me the code and explanation first.
+Await my confirmation before continuing to step [X+1].
+For any existing file: surgical edits only — show me the diff, not the full file rewrite.
+```
+
+---
+
+### PROMPT 3 — TESTING & HARDENING
+
+```
+Given the current Mission Creator implementation (domains/mission/ + apps/web/missions/new.tsx):
+
+1. Edge-case tests that could break this:
+   - POST where name is exactly 3 chars → should pass
+   - POST where name is exactly 2 chars → should 400
+   - POST where targetBody is "   " (spaces only) → should 400
+   - POST where type is undefined → should 400
+   - POST where description is exactly 500 chars → should pass
+   - POST where description is 501 chars → should 400
+   - POST with status: "ACTIVE" injected → status must still be DRAFT in DB
+   - GET /missions/:id with "not-a-uuid" → must 400 not 500
+
+2. Stress cases to think about:
+   - 50 concurrent POST /missions — does TypeORM connection pool hold?
+   - Table grows to 10,000 rows — does GET /missions still hit < 300ms? (check the createdAt index)
+
+3. Security risks to check:
+   - Is whitelist: true on the global ValidationPipe? (unknown fields must be stripped)
+   - Does a TypeORM/Postgres error surface the connection string or raw query in the 500 body?
+   - Can a client force status to anything other than DRAFT?
+
+4. Performance:
+   - Is there an index on missions.createdAt? (needed for ORDER BY createdAt DESC)
+   - Is the findAll() query fetching unnecessary columns?
+
+5. Improvements without rewriting:
+   - What single index addition would most future-proof the missions table?
+   - What single log line in the service would save the most debugging time in production?
+
+Ask:
+- What would fail in production that tests would miss?
+- What log fields should every mission service log emit? (at minimum: missionId, action, durationMs)
+
+Goal:
+Make the Mission Creator stable before Day 2 starts.
+```
+
+---
+
+### PROMPT 4 — ERROR DEBUGGING
+
+```
+Error:
+[paste exact error message and full stack trace here]
+
+Expected behavior:
+[e.g. POST /missions with valid body returns 201 with mission JSON]
+
+Actual behavior:
+[e.g. Returns 500, terminal shows "ECONNREFUSED 127.0.0.1:5432"]
+
+Relevant code (minimal snippet):
+[paste only the relevant method or config — not the whole file]
+
+Environment:
+- Development (local Mac M2)
+- PostgreSQL in Docker at localhost:5432
+- NestJS at localhost:3001
+- Node v20.x.x
+
+What I've already checked:
+- [ ] Docker container is running: `docker compose ps`
+- [ ] .env is loaded: printed DATABASE_HOST in the module
+- [ ] Port is not in use by another process: `lsof -i :5432`
+- [ ] TypeORM entity is decorated and added to the module's entities array
+- [add any others]
+
+Ask:
+1. Identify the root cause — not symptoms
+2. Provide the minimal fix (no rewrites, no new packages)
+3. Explain why this class of error happens in NestJS + TypeORM specifically
+4. Suggest one guard to add so this error is caught earlier in future domains
+
+Constraint:
+- Do not suggest large refactors
+- Keep the fix surgical and localized
+- Explain the "why" clearly — I will encounter this pattern again in domains/asteroid/ and domains/mining/
+```
+
+---
+
+### PROMPT 5 — REVIEWER ASPECT
+
+```
+Review the Mission Creator implementation as a senior engineer who will have to maintain this for 12 months.
+
+Scope (paste contents or file paths):
+- domains/mission/src/entities/mission.entity.ts
+- domains/mission/src/dto/create-mission.dto.ts
+- domains/mission/src/service/mission.service.ts
+- domains/mission/src/api/mission.controller.ts
+- domains/mission/src/mission.module.ts
+- apps/web/src/pages/missions/new.tsx
+- apps/web/src/pages/index.tsx
+
+Focus on:
+- Correctness: Does every edge case from the spec actually get handled?
+- Edge cases: What input would crash this silently (no 400, just wrong data in DB)?
+- Readability: Would a developer who joins on Day 60 understand this without a call?
+- Performance: Any N+1 queries, missing indexes, over-fetching columns?
+- Security: Does any error response expose internals (stack, query, connection string)?
+
+Ask:
+1. What are the top 3 risks in this implementation right now?
+2. What breaks first when the missions table has 100,000 rows?
+3. What is overcomplicated and should be simplified?
+4. What is missing that will cause pain on Day 5 when Mission + Payload + Vehicle are fused together?
+
+Be specific and critical. Point to file names and line numbers where possible.
+Do not suggest full rewrites — suggest targeted fixes only.
+```
+
+---
+
+### PROMPT 6 — ARCHITECT ASPECT
+
+```
+Given the Mission Creator (AIEN Day 1) and the full 30-day roadmap:
+
+Day 1: Mission Creator
+Day 5: Fuse Mission + Payload + Launch Vehicle
+Day 10: Mining Priority Engine uses mission targeting
+Day 20: Robots are assigned to missions
+Day 30: Asteroid resources feed Moon infrastructure seeded by missions
+
+Questions:
+1. Where will the Mission entity start to hurt as we add Payload, Vehicle, Outpost, and Robot relations in later days? What columns or structure decisions made today will become painful?
+
+2. The current schema has: id, name, description, type, targetBody, status, createdAt, updatedAt.
+   By Day 10, missions will need to link to asteroids, payloads, launch windows, and budgets.
+   How should the mission entity evolve without requiring a full migration rewrite?
+
+3. The MissionCreated event today only logs to console. By Day 5 it will trigger payload validation. By Day 20 it will schedule robot assignments. What event payload shape should we define now that won't break as consumers are added?
+
+4. If you were designing missions knowing the full dependency graph:
+   Missions → Payloads → Launch Vehicles → Asteroids → Mining Robots → Ore → Refinery → Manufacturing → Lunar Bases
+   What would you change about the Day 1 schema or service structure?
+
+Keep answers practical and specific to NestJS + TypeORM + PostgreSQL.
+No abstract patterns — tell me what files to change and what fields to add.
+```
+
+---
+
+## SECTION E — Daily Workflow Checklist
+
+Use this every day before running prompts:
+
+```
+□ docker compose -f infrastructure/docker/docker-compose.dev.yml ps
+  → All services healthy
+
+□ cd domains/mission && pnpm run start:dev
+  → NestJS listening on :3001
+
+□ cd apps/web && pnpm run dev
+  → Next.js on :3000
+
+□ Open http://localhost:15672
+  → RabbitMQ management (for when we wire events in Day 5+)
+
+□ Verify DB
+  docker exec -it aien_postgres psql -U aien -d aien_db -c "\dt"
+  → Should show: missions (after Day 1 TypeORM sync)
+```
+
+---
+
+## SECTION F — Commit Convention
+
+Follow this from Day 1 to keep the git history readable across 180+ days:
+
+```
+feat(mission): add MissionCreated entity and TypeORM config
+feat(mission): add create and findAll service methods
+feat(mission): add POST and GET /missions controller
+feat(web): add mission list to dashboard
+feat(web): add /missions/new create form
+test(mission): add unit tests for MissionService
+fix(mission): strip whitespace from targetBody before validation
+```
+
+Pattern: `type(domain): description`
+
+Types: `feat`, `fix`, `test`, `refactor`, `docs`, `chore`
+
+---
+
+## SECTION G — End-of-Day Verification
+
+Before committing, confirm all of these manually:
+
+```bash
+# 1. API: Create a mission
+curl -X POST http://localhost:3001/missions \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Apollo Redux","type":"MINING","targetBody":"16 Psyche"}'
+# Expect: 201 + mission JSON with status: "DRAFT"
+
+# 2. API: Validation rejects bad input
+curl -X POST http://localhost:3001/missions \
+  -H "Content-Type: application/json" \
+  -d '{"name":"AB","type":"MINING","targetBody":"16 Psyche"}'
+# Expect: 400 with message about name length
+
+# 3. API: List missions
+curl http://localhost:3001/missions
+# Expect: { data: [...], total: 1 }
+
+# 4. DB: Row exists
+docker exec -it aien_postgres psql -U aien -d aien_db \
+  -c "SELECT id, name, status, \"createdAt\" FROM missions;"
+
+# 5. UI: Visit http://localhost:3000
+#    → Mission appears in list
+
+# 6. UI: Visit http://localhost:3000/missions/new
+#    → Submit empty form → inline errors appear
+#    → Submit valid form → redirects to dashboard → mission in list
+```
+
+---
+
+*Day 1 complete. Mission exists. Day 2: Launch Vehicle Registry — `domains/mission/src/vehicle/`*
