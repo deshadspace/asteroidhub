@@ -1,8 +1,3 @@
-Now *that* has the right scale. 🌑☄️ This is not a project anymore. This is a software continent. It naturally supports **hundreds of vertically-built components**, and almost every component eventually talks to multiple others.
-
-You accidentally landed on something that resembles a blend of mission control, industrial automation, economics, robotics, materials science, logistics, and AI.
-
-Let's shape it into:
 
 # Asteroid Industrial Expansion Network (AIEN)
 
