@@ -429,8 +429,6 @@ Shipyards
 Expansion
 ```
 
-What I particularly like here for teaching is that day 40's component suddenly wakes up day 90's component.
-
 You build:
 
 > Ore purity analyzer
